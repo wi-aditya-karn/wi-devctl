@@ -9,9 +9,22 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from devctl.utils.shell import get_background_sync_log_path, get_logs_dir
+from devctl.utils.shell import get_background_sync_log_path, get_devctl_home, get_logs_dir
 
-_LAUNCHD_LABEL = "com.devctl.config-sync"
+
+def _launchd_label() -> str:
+    """LaunchAgent label derived from devctl home (e.g. com.devctl-dev.config-sync)."""
+    slug = get_devctl_home().name.lstrip(".")
+    return f"com.{slug}.config-sync"
+
+
+def _devctl_home_env() -> dict[str, str]:
+    """Extra env vars for background jobs when not using default ~/.devctl."""
+    home = get_devctl_home().resolve()
+    default = Path.home() / ".devctl"
+    if home == default.resolve():
+        return {}
+    return {"DEVCTL_HOME": str(home)}
 
 
 def _get_devctl_path() -> str | None:
@@ -19,11 +32,12 @@ def _get_devctl_path() -> str | None:
     if getattr(sys, "frozen", False):
         return sys.executable
     argv0 = Path(sys.argv[0]).resolve()
-    if argv0.name == "devctl" and argv0.is_file() and os.access(argv0, os.X_OK):
+    if argv0.name in ("devctl", "devctl-dev") and argv0.is_file() and os.access(argv0, os.X_OK):
         return str(argv0)
-    path = shutil.which("devctl")
-    if path:
-        return path
+    for name in ("devctl", "devctl-dev"):
+        path = shutil.which(name)
+        if path:
+            return path
     return None
 
 
@@ -73,7 +87,7 @@ def _launchd_deactivate(plist_path: Path) -> None:
 
 def _launchd_kickstart() -> None:
     """Run the job once now so the log file populates and failures surface immediately."""
-    key = f"{_launchd_gui_domain()}/{_LAUNCHD_LABEL}"
+    key = f"{_launchd_gui_domain()}/{_launchd_label()}"
     subprocess.run(
         ["launchctl", "kickstart", "-k", key],
         capture_output=True,
@@ -83,9 +97,10 @@ def _launchd_kickstart() -> None:
 def _install_launchd(devctl_path: str) -> str | None:
     """Install launchd plist for hourly sync. Returns error message or None."""
     home = Path.home()
+    label = _launchd_label()
     plist_dir = home / "Library" / "LaunchAgents"
     plist_dir.mkdir(parents=True, exist_ok=True)
-    plist_path = plist_dir / f"{_LAUNCHD_LABEL}.plist"
+    plist_path = plist_dir / f"{label}.plist"
 
     get_logs_dir().mkdir(parents=True, exist_ok=True)
     log_path = get_background_sync_log_path()
@@ -96,12 +111,18 @@ def _install_launchd(devctl_path: str) -> str | None:
     devctl_esc = devctl_path.replace("&", "&amp;").replace("\\", "\\\\").replace('"', '\\"')
     log_esc = log_str.replace("&", "&amp;")
 
+    env_vars = {"PYTHONUNBUFFERED": "1", **_devctl_home_env()}
+    env_xml = "\n".join(
+        f"    <key>{k}</key>\n    <string>{v.replace('&', '&amp;')}</string>"
+        for k, v in env_vars.items()
+    )
+
     plist_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>{_LAUNCHD_LABEL}</string>
+  <string>{label}</string>
   <key>ProgramArguments</key>
   <array>
     <string>{devctl_esc}</string>
@@ -115,8 +136,7 @@ def _install_launchd(devctl_path: str) -> str | None:
   <true/>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PYTHONUNBUFFERED</key>
-    <string>1</string>
+{env_xml}
   </dict>
   <key>StandardOutPath</key>
   <string>{log_esc}</string>
@@ -141,9 +161,12 @@ def _install_cron(devctl_path: str) -> str | None:
     get_logs_dir().mkdir(parents=True, exist_ok=True)
     log_path = get_background_sync_log_path()
     log_path.touch(exist_ok=True)
-    # env ensures line-oriented logs when stdout is not a TTY (fully buffered otherwise).
+    marker = f"{devctl_path} ai-kit sync"
+    env_parts = ["PYTHONUNBUFFERED=1"]
+    env_parts.extend(f"{k}={v}" for k, v in _devctl_home_env().items())
+    env_prefix = "env " + " ".join(env_parts)
     cron_line = (
-        f"0 * * * * env PYTHONUNBUFFERED=1 {devctl_path} ai-kit sync --background"
+        f"0 * * * * {env_prefix} {devctl_path} ai-kit sync --background"
         f" >> {log_path} 2>&1\n"
     )
     try:
@@ -153,8 +176,8 @@ def _install_cron(devctl_path: str) -> str | None:
             text=True,
         )
         existing = result.stdout or "" if result.returncode == 0 else ""
-        if "devctl" in existing and "ai-kit sync" in existing:
-            return None  # already installed
+        if marker in existing:
+            return None  # already installed for this binary/home
         new_crontab = existing.rstrip() + "\n" + cron_line if existing.strip() else cron_line
         proc = subprocess.run(
             ["crontab", "-"],
@@ -194,8 +217,11 @@ def install_background_sync() -> tuple[bool, str]:
 def uninstall_background_sync() -> tuple[bool, str]:
     """Remove background sync. Returns (success, message)."""
     system = platform.system().lower()
+    devctl_path = _get_devctl_path()
+    marker = f"{devctl_path} ai-kit sync" if devctl_path else None
     if system == "darwin":
-        plist_path = Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCHD_LABEL}.plist"
+        label = _launchd_label()
+        plist_path = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
         if not plist_path.exists():
             return True, "Background sync was not installed."
         try:
@@ -212,11 +238,11 @@ def uninstall_background_sync() -> tuple[bool, str]:
                 text=True,
             )
             existing = result.stdout or "" if result.returncode == 0 else ""
-            if "devctl" not in existing or "ai-kit sync" not in existing:
+            if not marker or marker not in existing:
                 return True, "Background sync was not installed."
             lines = [
                 ln for ln in existing.splitlines()
-                if not ("devctl" in ln and "ai-kit sync" in ln)
+                if marker not in ln
             ]
             new_crontab = "\n".join(lines) + ("\n" if lines else "")
             subprocess.run(["crontab", "-"], input=new_crontab, capture_output=True, text=True)
@@ -237,7 +263,8 @@ def describe_background_sync_status() -> str:
 
 
 def _describe_background_sync_darwin() -> str:
-    plist_path = Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCHD_LABEL}.plist"
+    label = _launchd_label()
+    plist_path = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
     log_path = get_background_sync_log_path()
     lines: list[str] = []
     if not plist_path.exists():
@@ -246,11 +273,15 @@ def _describe_background_sync_darwin() -> str:
         return "\n".join(lines)
 
     lines.append("Background sync: LaunchAgent plist present")
+    lines.append(f"  label: {label}")
     lines.append(f"  plist: {plist_path}")
     lines.append(f"  log:   {log_path}")
+    home_env = _devctl_home_env()
+    if home_env:
+        lines.append(f"  DEVCTL_HOME: {home_env['DEVCTL_HOME']}")
 
     domain = _launchd_gui_domain()
-    key = f"{domain}/{_LAUNCHD_LABEL}"
+    key = f"{domain}/{label}"
     if log_path.exists():
         st = log_path.stat()
         mtime = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
@@ -302,6 +333,8 @@ def _describe_background_sync_darwin() -> str:
 
 def _describe_background_sync_linux() -> str:
     log_path = get_background_sync_log_path()
+    devctl_path = _get_devctl_path()
+    marker = f"{devctl_path} ai-kit sync" if devctl_path else "devctl ai-kit sync"
     proc = subprocess.run(
         ["crontab", "-l"],
         capture_output=True,
@@ -313,12 +346,15 @@ def _describe_background_sync_linux() -> str:
         lines.append(f"  log (if ever installed): {log_path}")
         return "\n".join(lines)
     tab = proc.stdout or ""
-    hits = [ln.strip() for ln in tab.splitlines() if "devctl" in ln and "ai-kit sync" in ln]
+    hits = [ln.strip() for ln in tab.splitlines() if marker in ln]
     if not hits:
-        lines.append("Background sync: not installed (no devctl ai-kit sync cron line).")
+        lines.append("Background sync: not installed (no matching devctl ai-kit sync cron line).")
         lines.append("  Install: devctl ai-kit install-background-sync")
         return "\n".join(lines)
     lines.append("Background sync: cron entry present")
+    home_env = _devctl_home_env()
+    if home_env:
+        lines.append(f"  DEVCTL_HOME: {home_env['DEVCTL_HOME']}")
     for h in hits:
         lines.append(f"  {h}")
     lines.append(f"  log: {log_path}")

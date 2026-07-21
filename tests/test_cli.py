@@ -34,6 +34,22 @@ def test_cli_list_no_repos(tmp_path: Path) -> None:
     assert "No managed repos" in r.output
 
 
+def test_print_devctl_home_respects_env(tmp_path: Path) -> None:
+    dev_home = tmp_path / ".devctl-dev"
+    env = {**_env(tmp_path), "DEVCTL_HOME": str(dev_home)}
+    runner = CliRunner()
+    r = runner.invoke(cli, ["print-devctl-home"], env=env)
+    assert r.exit_code == 0
+    assert r.output.strip() == str(dev_home)
+
+
+def test_print_devctl_home_default(tmp_path: Path) -> None:
+    runner = CliRunner()
+    r = runner.invoke(cli, ["print-devctl-home"], env=_env(tmp_path))
+    assert r.exit_code == 0
+    assert r.output.strip() == str(tmp_path / ".devctl")
+
+
 def test_cli_list_with_repos(tmp_path: Path) -> None:
     devctl_home = tmp_path / ".devctl"
     devctl_home.mkdir()

@@ -11,7 +11,10 @@ def expand_path(path: str) -> Path:
 
 
 def get_devctl_home() -> Path:
-    """Return the devctl home directory (~/.devctl)."""
+    """Return the devctl home directory (~/.devctl, or DEVCTL_HOME if set)."""
+    override = os.environ.get("DEVCTL_HOME", "").strip()
+    if override:
+        return expand_path(override)
     return expand_path("~/.devctl")
 
 

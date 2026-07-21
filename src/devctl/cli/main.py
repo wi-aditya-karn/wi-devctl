@@ -37,6 +37,14 @@ def cli(verbose: bool) -> None:
     _maybe_auto_update()
 
 
+@cli.command("print-devctl-home", hidden=True)
+def print_devctl_home_cmd() -> None:
+    """Print resolved devctl home (respects DEVCTL_HOME). Used by install_dev.sh."""
+    from devctl.utils.shell import get_devctl_home
+
+    click.echo(str(get_devctl_home()))
+
+
 @cli.command("list")
 def list_cmd() -> None:
     """List all managed repos."""

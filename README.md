@@ -107,27 +107,26 @@ curl -fsSL https://raw.githubusercontent.com/WorkIndia-Private/wi-devctl/main/in
 | `DEVCTL_AI_KIT_REPO` | Run `devctl ai-kit setup --repo <url>` after install (**git** required on `PATH`) |
 | `DEVCTL_AI_KIT_BACKGROUND_SYNC=1` | Then run `devctl ai-kit install-background-sync` (macOS / Linux only; skipped elsewhere) |
 
-### Build devctl from a git branch
+### Dev install: build from a git branch
 
-When `DEVCTL_BRANCH` is set, `install.sh` **skips the release download** and builds devctl locally from that branch (requires **git**, **Python 3.11+**, **pip**, and PyInstaller build deps). Optional ai-kit setup and background sync use the same env vars as the release install.
+For local development, use **`install_dev.sh`**. It is fully isolated from production `install.sh`:
+
+| | Production (`install.sh`) | Dev (`install_dev.sh`) |
+|--|---------------------------|-------------------------|
+| Binary | `devctl` | `devctl-dev` |
+| Home | `~/.devctl` | `~/.devctl-dev` (override with `DEVCTL_HOME`) |
+| State | `~/.devctl/state.json` | `~/.devctl-dev/state.json` |
+| Background sync | `com.devctl.config-sync` | `com.devctl-dev.config-sync` |
+
+The script prompts for wi-devctl GitHub repo and branch, optional ai-kit repo/branch, and background sync. It **always clones that branch from GitHub** and builds `devctl-dev` with PyInstaller (requires **git**, **Python 3.11+**, **pip**, and build deps). The branch must include `DEVCTL_HOME` support in `shell.py`; isolation is verified before ai-kit setup.
 
 ```bash
-export DEVCTL_BRANCH=feature/my-devctl-branch
-export DEVCTL_AI_KIT_REPO=https://github.com/your-org/your-ai-config-repo
-export DEVCTL_AI_KIT_REPO_BRANCH=feature/configs   # optional; omit for repo default branch
-export DEVCTL_AI_KIT_BACKGROUND_SYNC=1
-curl -fsSL https://raw.githubusercontent.com/WorkIndia-Private/wi-devctl/main/install.sh | bash
+git clone git@github.com:WorkIndia-Private/wi-devctl.git
+cd wi-devctl
+bash install_dev.sh
 ```
 
-| Variable | Effect |
-|----------|--------|
-| `DEVCTL_BRANCH` | Build devctl from this git branch instead of downloading a release |
-| `DEVCTL_AI_KIT_REPO` | Same as release install — run `ai-kit setup` after the binary is installed |
-| `DEVCTL_AI_KIT_REPO_BRANCH` | Pass `--branch` to `ai-kit setup`; omit to use the repo's default branch |
-
-When a repo branch is pinned, it is stored in `~/.devctl/state.json` and included in each `~/.devctl/logs/background-sync.log` line (e.g. `org-kit@feature/configs`).
-
-`GITHUB_TOKEN` used only for **curl** when fetching `install.sh` or release assets does **not** configure `git clone` for your config repo. Use SSH or a git credential helper for private repos. For branch builds of private **wi-devctl**, `GITHUB_TOKEN` is also used for the source clone.
+Run dev commands with `devctl-dev` (or `DEVCTL_HOME=~/.devctl-dev devctl-dev ...`). Production `install.sh` runs `devctl` with **`DEVCTL_HOME` unset**, so `~/.devctl` is never affected by a dev shell export.
 
 Combine with a private **wi-devctl** install and one-shot ai-kit:
 
@@ -261,6 +260,7 @@ Fork the repo and add domains for your org — no hardcoded URLs; each domain wo
 
 | Variable | Description |
 |----------|-------------|
+| `DEVCTL_HOME` | Override devctl data directory (default: `~/.devctl`; dev install uses `~/.devctl-dev`) |
 | `DEVCTL_MANIFEST_URL` | Custom manifest URL for updates |
 | `DEVCTL_SKIP_AUTO_UPDATE` | Set to `1` to disable auto-update |
 | `DEVCTL_SKIP_NOTIFY` | Set to `1` to disable OS notifications on sync |
@@ -273,9 +273,7 @@ Fork the repo and add domains for your org — no hardcoded URLs; each domain wo
 | `DEVCTL_BACKUP_RETENTION_COUNT` | Number of config backups to keep per repo slug (default: 3). Set to `0` to disable pruning |
 | `DEVCTL_BACKUP_RETENTION_DISABLED` | Set to `1` to keep all backups (no automatic pruning) |
 | `DEVCTL_AI_KIT_REPO` | *(install.sh only)* If set, run `ai-kit setup` after binary install |
-| `DEVCTL_AI_KIT_REPO_BRANCH` | *(install.sh only)* Git branch for ai-kit setup; omit for repo default branch |
 | `DEVCTL_AI_KIT_BACKGROUND_SYNC` | *(install.sh only)* Set to `1` to run `install-background-sync` after setup |
-| `DEVCTL_BRANCH` | *(install.sh only)* Build devctl from this git branch instead of downloading a release |
 
 ### Background sync and notifications
 
@@ -336,6 +334,7 @@ wi-devctl/
 │   └── protocol.yaml
 ├── tests/
 ├── install.sh
+├── install_dev.sh
 └── .github/workflows/release.yml
 ```
 
