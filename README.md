@@ -116,9 +116,9 @@ For local development, use **`install_dev.sh`**. It is fully isolated from produ
 | Binary | `devctl` | `devctl-dev` |
 | Home | `~/.devctl` | `~/.devctl-dev` (override with `DEVCTL_HOME`) |
 | State | `~/.devctl/state.json` | `~/.devctl-dev/state.json` |
-| Background sync | `com.devctl.config-sync` | `com.devctl-dev.config-sync` |
+| Background sync | optional (`install-background-sync`) | not installed (testing only) |
 
-The script prompts for wi-devctl GitHub repo and branch, optional ai-kit repo/branch, and background sync. It **always clones that branch from GitHub** and builds `devctl-dev` with PyInstaller (requires **git**, **Python 3.11+**, **pip**, and build deps). The branch must include `DEVCTL_HOME` support in `shell.py`; isolation is verified before ai-kit setup.
+The script prompts for wi-devctl GitHub repo and branch and optional ai-kit repo/branch. It **always clones that branch from GitHub** and builds `devctl-dev` with PyInstaller (requires **git**, **Python 3.11+**, **pip**, and build deps). The branch must include `DEVCTL_HOME` support in `shell.py`; isolation is verified before ai-kit setup. Background sync is intentionally skipped — run `devctl-dev ai-kit install-background-sync` manually if you need it.
 
 ```bash
 git clone git@github.com:WorkIndia-Private/wi-devctl.git

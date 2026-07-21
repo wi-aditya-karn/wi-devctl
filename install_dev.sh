@@ -190,25 +190,6 @@ verify_dev_setup_artifacts() {
   fi
 }
 
-verify_dev_background_sync_artifacts() {
-  if [ "$DEVCTL_AI_KIT_BACKGROUND_SYNC" != "1" ]; then
-    return 0
-  fi
-  if [ "$(uname -s)" != "Darwin" ]; then
-    return 0
-  fi
-  local label="com.$(basename "$DEVCTL_HOME" | sed 's/^\.//').config-sync"
-  local plist_path="$HOME/Library/LaunchAgents/${label}.plist"
-  if [ ! -f "$plist_path" ]; then
-    echo "❌ Expected LaunchAgent plist: $plist_path" >&2
-    exit 1
-  fi
-  if ! grep -q 'DEVCTL_HOME' "$plist_path" 2>/dev/null; then
-    echo "❌ Background sync plist missing DEVCTL_HOME: $plist_path" >&2
-    exit 1
-  fi
-}
-
 reset_ai_kit_clone() {
   local slug="$1"
   local repos_dir="${DEVCTL_HOME}/repos"
@@ -349,15 +330,7 @@ build_devctl_from_branch() {
 
 build_devctl() {
   local branch="$1" output="$2" owner="$3" repo="$4"
-  local script_dir
-
-  if local_checkout_has_devctl_home; then
-    script_dir="$(install_dev_script_dir)"
-    echo "  → Building from local checkout (DEVCTL_HOME isolation): ${script_dir}" >&2
-    _pyinstaller_build "$script_dir" "$output" || exit 1
-  else
-    build_devctl_from_branch "$branch" "$output" "$owner" "$repo"
-  fi
+  build_devctl_from_branch "$branch" "$output" "$owner" "$repo"
 }
 
 warmup_devctl_binary() {
@@ -415,12 +388,8 @@ collect_dev_settings() {
 
   if [ -n "${DEVCTL_AI_KIT_REPO:-}" ]; then
     prompt_with_default DEVCTL_AI_KIT_REPO_BRANCH "AI collab kit git branch (leave empty for repo default)" "${DEVCTL_AI_KIT_REPO_BRANCH:-}"
-    local sync_default="n"
-    [ "${DEVCTL_AI_KIT_BACKGROUND_SYNC:-}" = "1" ] && sync_default="y"
-    prompt_yes_no DEVCTL_AI_KIT_BACKGROUND_SYNC "Enable hourly background sync for devctl-dev?" "$sync_default"
   else
     DEVCTL_AI_KIT_REPO_BRANCH=""
-    DEVCTL_AI_KIT_BACKGROUND_SYNC="0"
   fi
 
   echo "" >&2
@@ -439,7 +408,6 @@ collect_dev_settings() {
     else
       echo "  ai-kit repo:   ${DEVCTL_AI_KIT_REPO} (default branch)" >&2
     fi
-    echo "  background sync: $([ "$DEVCTL_AI_KIT_BACKGROUND_SYNC" = "1" ] && echo yes || echo no)" >&2
   else
     echo "  ai-kit repo:   (skipped)" >&2
   fi
@@ -459,7 +427,6 @@ main() {
 
   TOTAL_STEPS=7
   [ -n "${DEVCTL_AI_KIT_REPO:-}" ] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
-  [ "$DEVCTL_AI_KIT_BACKGROUND_SYNC" = "1" ] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 
   log_step "Detecting platform"
   local platform
@@ -523,22 +490,6 @@ main() {
     fi
     echo "  → ai-kit setup complete" >&2
     verify_dev_setup_artifacts
-  fi
-
-  if [ "$DEVCTL_AI_KIT_BACKGROUND_SYNC" = "1" ]; then
-    log_step "Background sync (devctl-dev)"
-    case "$platform" in
-      darwin-*|linux-*)
-        if ! run_devctl "$devctl_bin" ai-kit install-background-sync; then
-          echo "❌ install-background-sync failed." >&2
-          exit 1
-        fi
-        verify_dev_background_sync_artifacts
-        ;;
-      *)
-        echo "  → Skipping background sync (supported on macOS and Linux only)" >&2
-        ;;
-    esac
   fi
 
   echo "" >&2
